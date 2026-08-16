@@ -1,0 +1,17 @@
+# ML4W runtime / generated data
+.config/ml4w/wallpapers/
+.config/ml4w/assets/
+
+# Quickshell runtime
+.config/quickshell/by-id/
+
+# Caches
+.cache/
+**/.cache/
+
+# Logs
+*.log
+
+# Temporary / backup QML files
+.config/quickshell/**/*.bak
+.config/quickshell/*.bak

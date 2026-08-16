@@ -1,0 +1,1834 @@
+import Quickshell
+import Quickshell.Wayland
+import Quickshell.Networking
+import Quickshell.Io
+import QtQuick
+import QtQuick.Layouts
+
+ShellRoot {
+
+    // ================================================================
+    // MATUGEN COLORS
+    // ================================================================
+
+FileView {
+    id: colorsFile
+
+    path: "/home/tiendn/.config/waybar/colors.css"
+
+    preload: true
+    blockLoading: true
+    printErrors: false
+watchChanges: true
+
+onFileChanged: {
+    reload()
+}
+}
+    // ================================================================
+    // WIFI DEVICE RETRY TIMER
+    // ================================================================
+Timer {
+    id: findWifiDeviceTimer
+
+    interval: 500
+    repeat: true
+    running: false
+
+    onTriggered: {
+
+        if (root.wifiDevice) {
+            stop()
+
+            // Wi-Fi device is ready → refresh the network list immediately.
+            Qt.callLater(function() {
+                root.startScan()
+            })
+
+            return
+        }
+
+        root.findWifiDevice()
+    }
+}
+
+IpcHandler {
+    target: "wifi"
+
+    function toggle(): void {
+        root.visible = !root.visible
+    }
+
+    function show(): void {
+        root.visible = true
+    }
+
+    function hide(): void {
+        root.visible = false
+    }
+}
+PanelWindow {
+    id: root
+property int colorRevision: 0
+    visible: true
+
+    anchors {
+        top: true
+        right: true
+    }
+        margins {
+            top: 15
+            right: 260
+        }
+
+        implicitWidth: 380
+        implicitHeight: 650
+
+        color: "transparent"
+
+        WlrLayershell.layer: WlrLayer.Overlay
+
+        focusable: true
+
+        WlrLayershell.keyboardFocus:
+            WlrKeyboardFocus.OnDemand
+
+
+        // ============================================================
+        // READ MATUGEN COLOR
+        // ============================================================
+
+function matugenColor(name, fallback) {
+
+    var css = colorsFile.text()
+console.log(
+        "MATUGEN:",
+        name,
+        "=",
+        css.length > 0 ? "CSS LOADED" : "CSS EMPTY"
+    )
+    if (!css || css.length === 0)
+        return fallback
+
+    var escapedName =
+        name.replace(
+            /[-\/\\^$*+?.()|[\]{}]/g,
+            "\\$&"
+        )
+
+    var regex =
+        new RegExp(
+            "@define-color\\s+"
+            + escapedName
+            + "\\s+([^;]+);",
+            "m"
+        )
+
+    var match =
+        regex.exec(css)
+
+    if (!match)
+        return fallback
+
+    return match[1].trim()
+}
+
+        // ============================================================
+        // DYNAMIC COLORS FROM MATUGEN
+        // ============================================================
+
+        readonly property color bg:
+            matugenColor(
+                "background",
+                "#19120c"
+            )
+
+        readonly property color bgDark:
+            matugenColor(
+                "surface_container_lowest",
+                "#130d07"
+            )
+
+        readonly property color surface:
+            matugenColor(
+                "surface_container",
+                "#261e18"
+            )
+
+        readonly property color surface2:
+            matugenColor(
+                "surface_container_high",
+                "#302822"
+            )
+
+        readonly property color surfaceHighest:
+            matugenColor(
+                "surface_container_highest",
+                "#3c332c"
+            )
+
+        readonly property color border:
+            matugenColor(
+                "outline_variant",
+                "#51453a"
+            )
+
+        readonly property color text:
+            matugenColor(
+                "on_surface",
+                "#efe0d5"
+            )
+
+        readonly property color textBright:
+            matugenColor(
+                "on_surface",
+                "#efe0d5"
+            )
+
+        readonly property color textMuted:
+            matugenColor(
+                "on_surface_variant",
+                "#d5c3b5"
+            )
+
+        readonly property color textDim:
+            matugenColor(
+                "outline",
+                "#9d8e81"
+            )
+
+        readonly property color orange:
+            matugenColor(
+                "primary",
+                "#fdb975"
+            )
+
+        readonly property color primaryContainer:
+            matugenColor(
+                "primary_container",
+                "#693c00"
+            )
+
+        readonly property color green:
+            matugenColor(
+                "tertiary",
+                "#c0cc9a"
+            )
+
+        readonly property color red:
+            matugenColor(
+                "error",
+                "#ffb4ab"
+            )
+
+
+        // ============================================================
+        // STATE
+        // ============================================================
+
+        property var wifiDevice: null
+        property var selectedNetwork: null
+
+        property bool connecting: false
+        property string connectionError: ""
+
+
+        // ============================================================
+        // STARTUP
+        // ============================================================
+
+        Component.onCompleted: {
+
+            console.log(
+                "WifiApp starting - waiting for Wi-Fi device..."
+            )
+
+            findWifiDevice()
+
+            // Nếu NetworkManager chưa populate device
+            // thì tự thử lại mỗi 500ms.
+            if (!wifiDevice) {
+                findWifiDeviceTimer.start()
+            }
+        }
+
+
+        // ============================================================
+        // SIGNAL PERCENT
+        // ============================================================
+
+        function signalPercent(value) {
+
+            if (value === undefined || value === null)
+                return 0
+
+            var number = Number(value)
+
+            if (isNaN(number))
+                return 0
+
+            if (number >= 0 && number <= 1)
+                return Math.round(number * 100)
+
+            return Math.round(
+                Math.max(
+                    0,
+                    Math.min(100, number)
+                )
+            )
+        }
+
+
+        // ============================================================
+        // SIGNAL ICON
+        // ============================================================
+
+        function signalIcon(value) {
+
+            var percent =
+                signalPercent(value)
+
+            if (percent >= 75)
+                return "󰤨"
+
+            if (percent >= 50)
+                return "󰤥"
+
+            if (percent >= 25)
+                return "󰤢"
+
+            if (percent > 0)
+                return "󰤟"
+
+            return "󰤯"
+        }
+
+
+        // ============================================================
+        // FIND WIFI DEVICE
+        // ============================================================
+
+        function findWifiDevice() {
+
+            if (wifiDevice) {
+                findWifiDeviceTimer.stop()
+                return
+            }
+
+            console.log(
+                "Searching for Wi-Fi device..."
+            )
+
+            for (
+                const device
+                of Networking.devices.values
+            ) {
+
+                if (
+                    device.scannerEnabled
+                    !== undefined
+                ) {
+
+                    wifiDevice = device
+
+                    // Đã tìm thấy wlan0.
+                    // Không cần retry nữa.
+                    findWifiDeviceTimer.stop()
+
+                    console.log(
+                        "Wi-Fi device found:",
+                        device.name
+                    )
+
+                    startScan()
+
+                    break
+                }
+            }
+
+            if (!wifiDevice) {
+
+                console.log(
+                    "No Wi-Fi device found - retrying..."
+                )
+            }
+        }
+
+
+        // ============================================================
+        // SCAN
+        // ============================================================
+
+        function startScan() {
+
+            if (!wifiDevice)
+                return
+
+            console.log(
+                "Starting Wi-Fi scan..."
+            )
+
+            wifiDevice.scannerEnabled = true
+        }
+
+
+        // ============================================================
+        // SELECT NETWORK
+        // ============================================================
+
+        function selectNetwork(network) {
+
+            if (!network)
+                return
+
+            if (network.connected)
+                return
+
+            selectedNetwork = network
+
+            connectionError = ""
+
+            passwordError.text = ""
+
+            connecting = false
+
+            console.log(
+                "Selected:",
+                network.name,
+                "known:",
+                network.known
+            )
+
+
+            // ========================================================
+            // SAVED NETWORK
+            // ========================================================
+
+            if (network.known) {
+
+                connecting = true
+
+                console.log(
+                    "Known network - connecting directly:",
+                    network.name
+                )
+
+                network.connect()
+
+                return
+            }
+
+
+            // ========================================================
+            // OPEN NETWORK
+            // ========================================================
+
+            if (
+                network.security
+                === WifiSecurityType.Open
+            ) {
+
+                connecting = true
+
+                console.log(
+                    "Open network - connecting directly:",
+                    network.name
+                )
+
+                network.connect()
+
+                return
+            }
+
+
+            // ========================================================
+            // PASSWORD REQUIRED
+            // ========================================================
+
+            passwordInput.text = ""
+
+            passwordPopup.visible = true
+
+            Qt.callLater(
+                function() {
+                    passwordInput.forceActiveFocus()
+                }
+            )
+        }
+
+
+        // ============================================================
+        // CONNECT WITH PASSWORD
+        // ============================================================
+
+        function connectToNetwork() {
+
+            if (!selectedNetwork)
+                return
+
+            if (connecting)
+                return
+
+            var password =
+                passwordInput.text
+
+
+            if (password.length === 0) {
+
+                passwordError.text =
+                    "Please enter password"
+
+                passwordInput.forceActiveFocus()
+
+                return
+            }
+
+
+            passwordError.text = ""
+
+            connectionError = ""
+
+            connecting = true
+
+
+            console.log(
+                "Connecting with password:",
+                selectedNetwork.name
+            )
+
+
+            selectedNetwork.connectWithPsk(
+                password
+            )
+        }
+
+
+        // ============================================================
+        // FORGET NETWORK
+        // ============================================================
+
+        function forgetNetwork() {
+
+            if (!selectedNetwork)
+                return
+
+            console.log(
+                "Forgetting:",
+                selectedNetwork.name
+            )
+
+            selectedNetwork.forget()
+
+            passwordPopup.visible = false
+
+            passwordInput.text = ""
+
+            passwordError.text = ""
+
+            selectedNetwork = null
+
+            connecting = false
+
+            connectionError = ""
+
+            Qt.callLater(
+                function() {
+                    root.startScan()
+                }
+            )
+        }
+
+
+        // ============================================================
+        // CLOSE PASSWORD POPUP
+        // ============================================================
+
+        function closePasswordPopup() {
+
+            passwordPopup.visible = false
+
+            passwordInput.text = ""
+
+            passwordError.text = ""
+
+            selectedNetwork = null
+
+            connecting = false
+
+            connectionError = ""
+        }
+
+
+        // ============================================================
+        // CONNECTION SIGNALS
+        // ============================================================
+
+        Connections {
+
+            target: root.selectedNetwork
+
+
+            function onConnectedChanged() {
+
+                if (!root.selectedNetwork)
+                    return
+
+
+                console.log(
+                    "Connected state:",
+                    root.selectedNetwork.connected
+                )
+
+
+                if (
+                    root.selectedNetwork.connected
+                ) {
+
+                    root.connecting = false
+
+                    root.connectionError = ""
+
+                    passwordPopup.visible =
+                        false
+
+                    passwordInput.text =
+                        ""
+
+                    passwordError.text =
+                        ""
+
+                    console.log(
+                        "Connected:",
+                        root.selectedNetwork.name
+                    )
+                }
+            }
+
+
+            function onConnectionFailed(reason) {
+
+                if (!root.selectedNetwork)
+                    return
+
+
+                root.connecting = false
+
+                root.connectionError =
+                    "Connection failed"
+
+
+                passwordError.text =
+                    "Wrong password or connection failed"
+
+
+                console.log(
+                    "Connection failed:",
+                    reason
+                )
+
+
+                passwordInput.forceActiveFocus()
+            }
+        }
+
+
+        // ============================================================
+        // MAIN CARD
+        // ============================================================
+
+        Rectangle {
+
+            anchors.fill: parent
+
+            radius: 24
+
+            color:
+                root.bg
+
+            border.width:
+                1
+
+            border.color:
+                root.border
+
+
+            ColumnLayout {
+
+                anchors.fill: parent
+
+                anchors.margins: 22
+
+                spacing: 14
+
+
+                // ====================================================
+                // HEADER
+                // ====================================================
+
+                RowLayout {
+
+                    Layout.fillWidth: true
+
+
+                    ColumnLayout {
+
+                        Layout.fillWidth: true
+
+                        spacing: 2
+
+
+                        Text {
+
+                            text:
+                                "Wi-Fi"
+
+                            color:
+                                root.textBright
+
+                            font.pixelSize:
+                                24
+
+                            font.bold:
+                                true
+                        }
+
+
+                        Text {
+
+                            text:
+                                root.wifiDevice
+                                ? "Network connections"
+                                : "Searching for Wi-Fi..."
+
+                            color:
+                                root.textMuted
+
+                            font.pixelSize:
+                                13
+                        }
+                    }
+
+
+                    Text {
+
+                        text:
+                            root.wifiDevice
+                            ? "󰤨"
+                            : "󰖪"
+
+                        color:
+                            root.orange
+
+                        font.pixelSize:
+                            28
+                    }
+                }
+
+
+                // ====================================================
+                // CURRENT CONNECTION
+                // ====================================================
+
+                Rectangle {
+
+                    Layout.fillWidth:
+                        true
+
+                    height:
+                        82
+
+                    radius:
+                        18
+
+                    color:
+                        root.surface
+
+                    border.width:
+                        1
+
+                    border.color:
+                        root.border
+
+
+                    RowLayout {
+
+                        anchors.fill:
+                            parent
+
+                        anchors.margins:
+                            16
+
+
+                        Text {
+
+                            text: {
+
+                                if (!root.wifiDevice)
+                                    return "󰖪"
+
+                                for (
+                                    const network
+                                    of root.wifiDevice
+                                        .networks.values
+                                ) {
+
+                                    if (
+                                        network.connected
+                                    ) {
+
+                                        return root.signalIcon(
+                                            network.signalStrength
+                                        )
+                                    }
+                                }
+
+                                return "󰤯"
+                            }
+
+                            color:
+                                root.orange
+
+                            font.pixelSize:
+                                30
+                        }
+
+
+                        ColumnLayout {
+
+                            Layout.fillWidth:
+                                true
+
+                            spacing:
+                                3
+
+
+                            Text {
+
+                                Layout.fillWidth:
+                                    true
+
+                                text: {
+
+                                    if (!root.wifiDevice)
+                                        return "No Wi-Fi"
+
+                                    for (
+                                        const network
+                                        of root.wifiDevice
+                                            .networks.values
+                                    ) {
+
+                                        if (
+                                            network.connected
+                                        )
+                                            return network.name
+                                    }
+
+                                    return "Not connected"
+                                }
+
+                                color:
+                                    root.textBright
+
+                                font.pixelSize:
+                                    15
+
+                                font.bold:
+                                    true
+
+                                elide:
+                                    Text.ElideRight
+                            }
+
+
+                            Text {
+
+                                text: {
+
+                                    if (root.connecting)
+                                        return "Connecting..."
+
+                                    if (
+                                        root.connectionError
+                                        !== ""
+                                    )
+                                        return root.connectionError
+
+                                    if (
+                                        !root.wifiDevice
+                                    )
+                                        return "Wi-Fi unavailable"
+
+                                    for (
+                                        const network
+                                        of root.wifiDevice
+                                            .networks.values
+                                    ) {
+
+                                        if (
+                                            network.connected
+                                        ) {
+
+                                            return (
+                                                "Connected · "
+                                                + root.signalPercent(
+                                                    network.signalStrength
+                                                )
+                                                + "%"
+                                            )
+                                        }
+                                    }
+
+                                    return "Not connected"
+                                }
+
+                                color:
+                                    root.connectionError !== ""
+                                    ? root.red
+                                    : root.textMuted
+
+                                font.pixelSize:
+                                    12
+                            }
+                        }
+
+
+                        Text {
+
+                            text: {
+
+                                if (root.connecting)
+                                    return "󰔟"
+
+                                if (!root.wifiDevice)
+                                    return "󰖪"
+
+                                for (
+                                    const network
+                                    of root.wifiDevice
+                                        .networks.values
+                                ) {
+
+                                    if (
+                                        network.connected
+                                    )
+                                        return "●"
+                                }
+
+                                return "○"
+                            }
+
+                            color:
+                                root.orange
+
+                            font.pixelSize:
+                                12
+                        }
+                    }
+                }
+
+
+                // ====================================================
+                // AVAILABLE NETWORKS
+                // ====================================================
+
+                RowLayout {
+
+                    Layout.fillWidth:
+                        true
+
+
+                    Text {
+
+                        text:
+                            "AVAILABLE NETWORKS"
+
+                        color:
+                            root.textDim
+
+                        font.pixelSize:
+                            11
+
+                        font.bold:
+                            true
+
+                        Layout.fillWidth:
+                            true
+                    }
+
+
+                    Text {
+
+                        id:
+                            refreshIcon
+
+                        text:
+                            "↻"
+
+                        color:
+                            root.orange
+
+                        font.pixelSize:
+                            20
+
+
+                        MouseArea {
+
+                            anchors.fill:
+                                parent
+
+                            cursorShape:
+                                Qt.PointingHandCursor
+
+                            onClicked: {
+                                root.startScan()
+                            }
+                        }
+                    }
+                }
+
+
+                // ====================================================
+                // NETWORK LIST
+                // ====================================================
+
+                Rectangle {
+
+                    Layout.fillWidth:
+                        true
+
+                    Layout.fillHeight:
+                        true
+
+                    radius:
+                        16
+
+                    color:
+                        root.surface
+
+                    border.width:
+                        1
+
+                    border.color:
+                        root.border
+
+                    clip:
+                        true
+
+
+                    Column {
+
+                        anchors.fill:
+                            parent
+
+                        anchors.margins:
+                            8
+
+                        spacing:
+                            2
+
+
+                        Repeater {
+
+                            model:
+                                root.wifiDevice
+                                ? root.wifiDevice.networks
+                                : []
+
+
+                            delegate:
+                                Rectangle {
+
+                                required property var modelData
+
+                                property var network:
+                                    modelData
+
+
+                                width:
+                                    parent.width
+
+                                height:
+                                    45
+
+                                radius:
+                                    10
+
+
+                                color:
+
+                                    mouse.containsMouse
+                                    ? root.surfaceHighest
+
+                                    : network.connected
+                                    ? root.primaryContainer
+
+                                    : "transparent"
+
+
+                                border.width:
+                                    network.connected
+                                    ? 1
+                                    : 0
+
+                                border.color:
+                                    root.orange
+
+
+                                RowLayout {
+
+                                    anchors.fill:
+                                        parent
+
+                                    anchors.leftMargin:
+                                        10
+
+                                    anchors.rightMargin:
+                                        10
+
+                                    spacing:
+                                        10
+
+
+                                    Text {
+
+                                        text:
+                                            root.signalIcon(
+                                                network.signalStrength
+                                            )
+
+                                        color:
+                                            network.connected
+                                            ? root.orange
+                                            : root.textMuted
+
+                                        font.pixelSize:
+                                            20
+                                    }
+
+
+                                    Text {
+
+                                        text:
+                                            network.name
+
+                                        color:
+                                            root.text
+
+                                        font.pixelSize:
+                                            13
+
+                                        Layout.fillWidth:
+                                            true
+
+                                        elide:
+                                            Text.ElideRight
+                                    }
+
+
+                                    Text {
+
+                                        visible:
+                                            network.known
+
+                                        text:
+                                            "✓"
+
+                                        color:
+                                            root.green
+
+                                        font.pixelSize:
+                                            12
+                                    }
+
+
+                                    Text {
+
+                                        text:
+                                            root.signalPercent(
+                                                network.signalStrength
+                                            )
+                                            + "%"
+
+                                        color:
+                                            root.textMuted
+
+                                        font.pixelSize:
+                                            11
+                                    }
+
+
+                                    Text {
+
+                                        text:
+                                            network.security
+                                            ===
+                                            WifiSecurityType.Open
+                                            ? ""
+                                            : "󰌾"
+
+                                        color:
+                                            root.textDim
+
+                                        font.pixelSize:
+                                            14
+                                    }
+
+
+                                    Text {
+
+                                        visible:
+                                            network.connected
+
+                                        text:
+                                            "●"
+
+                                        color:
+                                            root.orange
+
+                                        font.pixelSize:
+                                            8
+                                    }
+                                }
+
+
+                                MouseArea {
+
+                                    id:
+                                        mouse
+
+                                    anchors.fill:
+                                        parent
+
+                                    hoverEnabled:
+                                        true
+
+                                    cursorShape:
+                                        Qt.PointingHandCursor
+
+
+                                    onClicked: {
+
+                                        root.selectNetwork(
+                                            network
+                                        )
+                                    }
+                                }
+                            }
+                        }
+
+
+                        Text {
+
+                            visible:
+                                root.wifiDevice
+                                &&
+                                root.wifiDevice.networks
+                                    .values.length === 0
+
+                            anchors.horizontalCenter:
+                                parent.horizontalCenter
+
+                            text:
+                                root.wifiDevice
+                                &&
+                                root.wifiDevice.scannerEnabled
+                                ? "Scanning networks..."
+                                : "No networks found"
+
+                            color:
+                                root.textDim
+
+                            font.pixelSize:
+                                12
+                        }
+                    }
+                }
+
+
+                // ====================================================
+                // BOTTOM BUTTONS
+                // ====================================================
+
+                RowLayout {
+
+                    Layout.fillWidth:
+                        true
+
+                    spacing:
+                        8
+
+
+                    Rectangle {
+
+                        Layout.fillWidth:
+                            true
+
+                        height:
+                            54
+
+                        radius:
+                            14
+
+                        color:
+                            Networking.wifiEnabled
+                            ? root.surface
+                            : root.bgDark
+
+                        border.width:
+                            Networking.wifiEnabled
+                            ? 1
+                            : 0
+
+                        border.color:
+                            root.orange
+
+
+                        Column {
+
+                            anchors.centerIn:
+                                parent
+
+                            spacing:
+                                3
+
+
+                            Text {
+
+                                anchors.horizontalCenter:
+                                    parent.horizontalCenter
+
+                                text:
+                                    "󰤨"
+
+                                color:
+                                    Networking.wifiEnabled
+                                    ? root.orange
+                                    : root.textDim
+
+                                font.pixelSize:
+                                    19
+                            }
+
+
+                            Text {
+
+                                anchors.horizontalCenter:
+                                    parent.horizontalCenter
+
+                                text:
+                                    "Wi-Fi"
+
+                                color:
+                                    Networking.wifiEnabled
+                                    ? root.textBright
+                                    : root.textDim
+
+                                font.pixelSize:
+                                    11
+                            }
+                        }
+
+
+                        MouseArea {
+
+                            anchors.fill:
+                                parent
+
+                            cursorShape:
+                                Qt.PointingHandCursor
+
+
+                            onClicked: {
+
+                                Networking.wifiEnabled =
+                                    !Networking.wifiEnabled
+
+
+                                if (
+                                    Networking.wifiEnabled
+                                ) {
+
+                                    Qt.callLater(
+                                        root.findWifiDevice
+                                    )
+
+                                    findWifiDeviceTimer.start()
+                                }
+                            }
+                        }
+                    }
+
+
+                    Rectangle {
+
+                        Layout.fillWidth:
+                            true
+
+                        height:
+                            54
+
+                        radius:
+                            14
+
+                        color:
+                            root.bgDark
+
+
+                        Column {
+
+                            anchors.centerIn:
+                                parent
+
+                            spacing:
+                                3
+
+
+                            Text {
+
+                                anchors.horizontalCenter:
+                                    parent.horizontalCenter
+
+                                text:
+                                    "󰀝"
+
+                                color:
+                                    root.textDim
+
+                                font.pixelSize:
+                                    19
+                            }
+
+
+                            Text {
+
+                                anchors.horizontalCenter:
+                                    parent.horizontalCenter
+
+                                text:
+                                    "Hotspot"
+
+                                color:
+                                    root.textDim
+
+                                font.pixelSize:
+                                    11
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+
+        // ============================================================
+        // POPUP BACKDROP
+        // ============================================================
+
+        MouseArea {
+
+            visible:
+                passwordPopup.visible
+
+            anchors.fill:
+                parent
+
+            z:
+                90
+
+            onClicked: {
+                root.closePasswordPopup()
+            }
+        }
+
+
+        // ============================================================
+        // PASSWORD POPUP
+        // ============================================================
+
+        Rectangle {
+
+            id:
+                passwordPopup
+
+            visible:
+                false
+
+            anchors.centerIn:
+                parent
+
+            width:
+                330
+
+            height:
+                225
+
+            radius:
+                20
+
+            color:
+                root.bg
+
+            border.width:
+                1
+
+            border.color:
+                root.border
+
+            z:
+                100
+
+
+            ColumnLayout {
+
+                anchors.fill:
+                    parent
+
+                anchors.margins:
+                    20
+
+                spacing:
+                    12
+
+
+                Text {
+
+                    text:
+                        "Connect to Wi-Fi"
+
+                    color:
+                        root.textBright
+
+                    font.pixelSize:
+                        18
+
+                    font.bold:
+                        true
+                }
+
+
+                Text {
+
+                    Layout.fillWidth:
+                        true
+
+                    text:
+                        root.selectedNetwork
+                        ? root.selectedNetwork.name
+                        : ""
+
+                    color:
+                        root.orange
+
+                    font.pixelSize:
+                        13
+
+                    elide:
+                        Text.ElideRight
+                }
+
+
+                Rectangle {
+
+                    Layout.fillWidth:
+                        true
+
+                    height:
+                        44
+
+                    radius:
+                        10
+
+                    color:
+                        root.surface
+
+                    border.width:
+                        1
+
+                    border.color:
+                        passwordInput.activeFocus
+                        ? root.orange
+                        : root.border
+
+
+                    TextInput {
+
+                        id:
+                            passwordInput
+
+                        anchors.fill:
+                            parent
+
+                        anchors.leftMargin:
+                            12
+
+                        anchors.rightMargin:
+                            12
+
+                        verticalAlignment:
+                            TextInput.AlignVCenter
+
+                        color:
+                            root.textBright
+
+                        font.pixelSize:
+                            14
+
+                        echoMode:
+                            TextInput.Password
+
+                        clip:
+                            true
+
+                        selectByMouse:
+                            true
+
+                        focus:
+                            true
+
+
+                        Keys.onReturnPressed: {
+                            root.connectToNetwork()
+                        }
+                    }
+
+
+                    Text {
+
+                        id:
+                            passwordPlaceholder
+
+                        anchors.left:
+                            parent.left
+
+                        anchors.leftMargin:
+                            12
+
+                        anchors.verticalCenter:
+                            parent.verticalCenter
+
+                        text:
+                            "Password"
+
+                        color:
+                            root.textDim
+
+                        font.pixelSize:
+                            13
+
+                        visible:
+                            passwordInput.text.length === 0
+                            &&
+                            !passwordInput.activeFocus
+
+
+                        MouseArea {
+
+                            anchors.fill:
+                                parent
+
+                            onClicked: {
+                                passwordInput.forceActiveFocus()
+                            }
+                        }
+                    }
+                }
+
+
+                Text {
+
+                    id:
+                        passwordError
+
+                    Layout.fillWidth:
+                        true
+
+                    text:
+                        root.connectionError !== ""
+                        ? root.connectionError
+                        : ""
+
+                    color:
+                        root.red
+
+                    font.pixelSize:
+                        11
+
+                    elide:
+                        Text.ElideRight
+                }
+
+
+                RowLayout {
+
+                    Layout.fillWidth:
+                        true
+
+                    spacing:
+                        8
+
+
+                    Rectangle {
+
+                        width:
+                            72
+
+                        height:
+                            36
+
+                        radius:
+                            10
+
+                        color:
+                            root.bgDark
+
+                        visible:
+                            root.selectedNetwork
+                            &&
+                            root.selectedNetwork.known
+
+
+                        Text {
+
+                            anchors.centerIn:
+                                parent
+
+                            text:
+                                "Forget"
+
+                            color:
+                                root.red
+
+                            font.pixelSize:
+                                11
+                        }
+
+
+                        MouseArea {
+
+                            anchors.fill:
+                                parent
+
+                            cursorShape:
+                                Qt.PointingHandCursor
+
+                            onClicked: {
+                                root.forgetNetwork()
+                            }
+                        }
+                    }
+
+
+                    Item {
+                        Layout.fillWidth:
+                            true
+                    }
+
+
+                    Rectangle {
+
+                        width:
+                            80
+
+                        height:
+                            36
+
+                        radius:
+                            10
+
+                        color:
+                            root.surface2
+
+
+                        Text {
+
+                            anchors.centerIn:
+                                parent
+
+                            text:
+                                "Cancel"
+
+                            color:
+                                root.textMuted
+
+                            font.pixelSize:
+                                12
+                        }
+
+
+                        MouseArea {
+
+                            anchors.fill:
+                                parent
+
+                            cursorShape:
+                                Qt.PointingHandCursor
+
+                            onClicked: {
+                                root.closePasswordPopup()
+                            }
+                        }
+                    }
+
+
+                    Rectangle {
+
+                        width:
+                            90
+
+                        height:
+                            36
+
+                        radius:
+                            10
+
+                        color:
+                            root.connecting
+                            ? root.surface2
+                            : root.orange
+
+
+                        Text {
+
+                            anchors.centerIn:
+                                parent
+
+                            text:
+                                root.connecting
+                                ? "Connecting"
+                                : "Connect"
+
+                            color:
+                                root.connecting
+                                ? root.textDim
+                                : root.bg
+
+                            font.pixelSize:
+                                12
+
+                            font.bold:
+                                true
+                        }
+
+
+                        MouseArea {
+
+                            anchors.fill:
+                                parent
+
+                            cursorShape:
+                                Qt.PointingHandCursor
+
+                            enabled:
+                                !root.connecting
+
+                            onClicked: {
+                                root.connectToNetwork()
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

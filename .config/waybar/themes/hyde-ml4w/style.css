@@ -1,0 +1,50 @@
+@define-color bar-bg rgba(31, 35, 40, 0.95);
+@define-color main-bg #101419;
+@define-color main-fg #93cee9;
+
+@define-color wb-act-bg #93cee9;
+@define-color wb-act-fg #1f2328;
+
+@define-color wb-hvr-bg #93cee9;
+@define-color wb-hvr-fg #1f2328;
+
+@import "groups/pill.css";
+@import "groups/pill-in.css";
+@import "groups/pill-out.css";
+@import "groups/pill-left.css";
+@import "groups/pill-right.css";
+@import "groups/pill-up.css";
+@import "groups/pill-down.css";
+@import "groups/leaf.css";
+@import "groups/leaf-inverse.css";
+
+window#waybar {
+    background: transparent;
+}
+
+.module {
+    color: @main-fg;
+}
+
+#pill,
+#pill-in,
+#pill-out,
+#leaf,
+#leaf-inverse {
+    background-color: @main-bg;
+    border-color: @main-bg;
+    border-style: solid;
+}
+
+#workspaces button {
+    border: 0;
+    box-shadow: none;
+    text-shadow: none;
+    color: @main-fg;
+}
+
+#workspaces button.active {
+    background: @wb-act-bg;
+    color: @wb-act-fg;
+    border-radius: 10pt;
+}

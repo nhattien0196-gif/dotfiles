@@ -1,0 +1,72 @@
+{
+    "style": "~/.config/waybar/themes/hyde-ml4w/style.css",
+    "layer": "top",
+    "margin-top": 6,
+    "margin-bottom": 0,
+    "margin-left": 8,
+    "margin-right": 8,
+    "spacing": 0,
+
+    "include": [
+        "~/.config/ml4w/settings/waybar-quicklinks.json",
+        "~/.config/waybar/modules.json"
+    ],
+
+    "modules-left": [
+        "group/leaf-inverse"
+    ],
+
+    "modules-center": [
+        "group/pill#1",
+        "group/pill-in#center",
+        "group/pill#2"
+    ],
+
+    "modules-right": [
+        "group/leaf"
+    ],
+
+    "group/leaf-inverse": {
+        "orientation": "inherit",
+        "modules": [
+            "hyprland/workspaces",
+            "wlr/taskbar"
+        ]
+    },
+
+    "group/pill#1": {
+        "orientation": "inherit",
+        "modules": [
+            "custom/appmenu",
+            "custom/nowplaying"
+        ]
+    },
+
+    "group/pill-in#center": {
+        "orientation": "inherit",
+        "modules": [
+            "hyprland/window",
+            "clock",
+            "custom/updates"
+        ]
+    },
+
+    "group/pill#2": {
+        "orientation": "inherit",
+        "modules": [
+            "pulseaudio",
+            "network",
+            "battery"
+        ]
+    },
+
+    "group/leaf": {
+        "orientation": "inherit",
+        "modules": [
+            "bluetooth",
+            "tray",
+            "custom/notification",
+            "custom/exit"
+        ]
+    }
+}
