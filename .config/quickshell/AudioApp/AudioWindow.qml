@@ -665,12 +665,14 @@ readonly property color outline:
                                     delegate: Rectangle {
                                         required property var modelData
 
-                                        readonly property bool valid:
-                                            modelData !== null &&
-                                            modelData.ready &&
-                                            !modelData.isStream &&
-                                            modelData.isSink &&
-                                            modelData.audio !== null
+readonly property bool valid:
+    modelData !== null &&
+    modelData.ready &&
+    modelData.isStream &&
+    modelData.audio !== null &&
+    modelData.properties &&
+    modelData.properties["media.class"] === "Stream/Output/Audio" &&
+    modelData.properties["pulse.corked"] !== "true"
 
                                         visible: valid
 
@@ -991,7 +993,8 @@ readonly property bool valid:
     modelData.audio !== null &&
     modelData.properties &&
     modelData.properties["media.class"] === "Stream/Output/Audio" &&
-    modelData.properties["media.name"] !== "Quickshell Networking API"
+    modelData.properties["media.name"] !== "CachyOs - Quickshell Networking API" &&
+    modelData.properties["pulse.corked"] !== "true"
 
         readonly property string applicationName:
             modelData &&
@@ -1008,9 +1011,50 @@ readonly property bool valid:
                     : "Unknown"
                 )
 
-        // Chỉ lấy stream đầu tiên của mỗi ứng dụng
+        // Chỉ hiển thị stream đang phát đầu tiên của mỗi ứng dụng.
+        // Pipewire.nodes.values là danh sách PwNode thật của ObjectModel.
+        readonly property bool isFirstActiveAppStream: {
+            if (!valid)
+                return false
 
-visible: valid
+            var nodes = Pipewire.nodes.values
+
+            for (var i = 0; i < nodes.length; i++) {
+                var node = nodes[i]
+
+                if (!node ||
+                    !node.ready ||
+                    !node.isStream ||
+                    !node.audio ||
+                    !node.properties)
+                    continue
+
+                if (node === modelData)
+                    break
+
+                if (node.properties["media.class"] !== "Stream/Output/Audio")
+                    continue
+
+                if (node.properties["media.name"] ===
+                    "CachyOs - Quickshell Networking API")
+                    continue
+
+                if (node.properties["pulse.corked"] === "true")
+                    continue
+
+                var nodeApp =
+                    node.properties["application.name"]
+                    ? node.properties["application.name"]
+                    : (node.description || node.name || "Unknown")
+
+                if (nodeApp === applicationName)
+                    return false
+            }
+
+            return true
+        }
+
+        visible: valid && isFirstActiveAppStream
 
         Layout.fillWidth: true
 
@@ -1026,40 +1070,44 @@ visible: valid
                 : []
         }
 
-        IconImage {
-            id: applicationIcon
+        RowLayout {
+            id: applicationHeader
 
             anchors {
                 left: parent.left
                 verticalCenter: parent.verticalCenter
             }
 
-            implicitSize: 22
+            spacing: 8
 
-            source:
-                audioApp.appIcon(
-                    modelData
-                )
-        }
+            IconImage {
+                id: applicationIcon
 
-        Text {
-            anchors {
-                left: applicationIcon.right
-                leftMargin: 8
-                right: parent.right
-                top: parent.top
+                implicitSize: 22
+
+                source:
+                    audioApp.appIcon(
+                        modelData
+                    )
             }
 
-            height: 20
+            Text {
+                Layout.preferredWidth: 110
 
-            text: applicationName
+                height: 20
 
-            color: audioApp.text
+                text: applicationName
 
-            font.pixelSize: 11
-            font.bold: true
+                color: audioApp.text
 
-            elide: Text.ElideRight
+                font.pixelSize: 11
+                font.bold: true
+
+                horizontalAlignment: Text.AlignLeft
+                verticalAlignment: Text.AlignVCenter
+
+                elide: Text.ElideRight
+            }
         }
 
         Text {
